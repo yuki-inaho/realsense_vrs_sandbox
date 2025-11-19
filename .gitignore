@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sample data files (large files)
+data/rosbag/d435i_walk_around.bag
+data/rosbag/sample_d435i.bag
+
+# Keep only LFS-tracked user data
+!data/rosbag/20251119_112125.bag
+third/vrs_install/

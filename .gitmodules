@@ -1,0 +1,3 @@
+[submodule "third/vrs"]
+	path = third/vrs
+	url = https://github.com/facebookresearch/vrs.git
