@@ -33,3 +33,4 @@ data/rosbag/sample_d435i.bag
 # Keep only LFS-tracked user data
 !data/rosbag/20251119_112125.bag
 third/vrs_install/
+pyvrs_writer/build/
