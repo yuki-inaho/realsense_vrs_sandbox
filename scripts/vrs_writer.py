@@ -106,7 +106,10 @@ class VRSWriter:
 
         try:
             assert self._writer is not None
-            self._writer.add_stream(stream_id, stream_name)
+            # Encode stream_id in stream_name (flavor) for later retrieval by VRSReader
+            # Format: "stream_name|id:stream_id"
+            encoded_name = f"{stream_name}|id:{stream_id}"
+            self._writer.add_stream(stream_id, encoded_name)
             self._stream_ids.add(stream_id)  # Track successfully added stream
         except Exception as e:
             raise RuntimeError(f"Failed to add stream {stream_id} '{stream_name}': {e}") from e

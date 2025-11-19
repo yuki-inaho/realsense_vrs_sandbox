@@ -56,9 +56,20 @@ class VRSReader:
 
         self._filepath = filepath
         self._reader: Any = None  # pyvrs.SyncVRSReader instance
+        self._stream_id_mapping: dict[int, str] = {}  # user_id -> vrs_stream_id
 
         try:
             self._reader = pyvrs.SyncVRSReader(str(filepath))
+            # Cache stream ID mapping at initialization (no iteration required)
+            for vrs_stream_id in self._reader.stream_ids:
+                info = self._reader.get_stream_info(vrs_stream_id)
+                flavor = info.get("flavor", "")
+                if "|id:" in flavor:
+                    try:
+                        user_id = int(flavor.split("|id:")[-1])
+                        self._stream_id_mapping[user_id] = vrs_stream_id
+                    except ValueError:
+                        pass
         except Exception as e:
             raise RuntimeError(f"Failed to open VRS file '{filepath}': {e}") from e
 
@@ -88,8 +99,10 @@ class VRSReader:
     def get_stream_ids(self) -> list[int]:
         """Get list of all stream IDs in the VRS file.
 
+        Extracts user-specified stream IDs from VRS stream flavors (encoded as "name|id:1001").
+
         Returns:
-            List of stream IDs
+            List of user-specified stream IDs
 
         Raises:
             RuntimeError: If reader is not open
@@ -98,38 +111,52 @@ class VRSReader:
             raise RuntimeError("VRS file is not open")
 
         try:
-            # PyVRS stores stream IDs as strings, so we need to collect unique ones
-            # by iterating through all records
-            stream_ids_set: set[str] = set()
-            for record in self._reader:
-                stream_ids_set.add(record.stream_id)
+            stream_ids = []
+            for vrs_stream_id in self._reader.stream_ids:
+                info = self._reader.get_stream_info(vrs_stream_id)
+                flavor = info.get("flavor", "")
 
-            # Convert string stream IDs to integers
-            # Stream ID format in PyVRS is like "1-1001" (RecordableTypeId-InstanceId)
-            # We extract the numeric part after the dash
-            numeric_ids = []
-            for sid in stream_ids_set:
-                try:
-                    # Try to parse as "TypeId-InstanceId" format
-                    if "-" in sid:
-                        parts = sid.split("-")
-                        numeric_ids.append(int(parts[-1]))
-                    else:
-                        # Try to parse as plain integer
-                        numeric_ids.append(int(sid))
-                except ValueError:
-                    # If conversion fails, skip this stream ID
-                    continue
+                # Extract user stream_id from flavor
+                # Format: "stream_name|id:stream_id"
+                if "|id:" in flavor:
+                    try:
+                        user_stream_id = int(flavor.split("|id:")[-1])
+                        stream_ids.append(user_stream_id)
+                    except ValueError:
+                        # Fallback: use VRS instance ID
+                        if "-" in vrs_stream_id:
+                            stream_ids.append(int(vrs_stream_id.split("-")[-1]))
+                else:
+                    # No encoded ID, use VRS instance ID
+                    if "-" in vrs_stream_id:
+                        stream_ids.append(int(vrs_stream_id.split("-")[-1]))
 
-            return sorted(numeric_ids)
+            return sorted(stream_ids)
         except Exception as e:
             raise RuntimeError(f"Failed to get stream IDs: {e}") from e
+
+    def _get_vrs_stream_id(self, user_stream_id: int) -> str:
+        """Convert user stream_id to VRS stream_id using cached mapping.
+
+        Args:
+            user_stream_id: User-specified stream ID
+
+        Returns:
+            VRS stream ID (format: "RecordableTypeId-InstanceId")
+
+        Raises:
+            ValueError: If stream_id not found
+        """
+        if user_stream_id in self._stream_id_mapping:
+            return self._stream_id_mapping[user_stream_id]
+
+        raise ValueError(f"Stream ID {user_stream_id} not found")
 
     def read_configuration(self, stream_id: int) -> dict[str, Any]:
         """Read configuration record for the specified stream.
 
         Args:
-            stream_id: Target stream ID
+            stream_id: Target stream ID (user-specified)
 
         Returns:
             Configuration data as dictionary
@@ -145,21 +172,13 @@ class VRSReader:
             raise ValueError(f"stream_id must be int, got {type(stream_id).__name__}")
 
         try:
+            # Convert user stream_id to VRS stream_id
+            vrs_stream_id = self._get_vrs_stream_id(stream_id)
+
             # Iterate through all records and find configuration for the stream
             for record in self._reader:
-                # Match stream ID (convert record.stream_id to numeric for comparison)
-                try:
-                    if "-" in record.stream_id:
-                        record_numeric_id = int(record.stream_id.split("-")[-1])
-                    else:
-                        record_numeric_id = int(record.stream_id)
-                except (ValueError, AttributeError):
-                    continue
-
-                if (
-                    record_numeric_id == stream_id
-                    and record.record_type == pyvrs.RecordType.CONFIGURATION
-                ):
+                # Note: record.record_type is a string, not enum
+                if record.stream_id == vrs_stream_id and record.record_type == "configuration":
                     # Get data from the record
                     data = record.get_data_bytes()
                     if data:
@@ -183,7 +202,7 @@ class VRSReader:
         """Read all data records for the specified stream.
 
         Args:
-            stream_id: Target stream ID
+            stream_id: Target stream ID (user-specified)
 
         Yields:
             Dictionary with 'timestamp' and 'data' keys for each record
@@ -199,17 +218,12 @@ class VRSReader:
             raise ValueError(f"stream_id must be int, got {type(stream_id).__name__}")
 
         try:
-            for record in self._reader:
-                # Match stream ID
-                try:
-                    if "-" in record.stream_id:
-                        record_numeric_id = int(record.stream_id.split("-")[-1])
-                    else:
-                        record_numeric_id = int(record.stream_id)
-                except (ValueError, AttributeError):
-                    continue
+            # Convert user stream_id to VRS stream_id
+            vrs_stream_id = self._get_vrs_stream_id(stream_id)
 
-                if record_numeric_id == stream_id and record.record_type == pyvrs.RecordType.DATA:
+            for record in self._reader:
+                # Note: record.record_type is a string, not enum
+                if record.stream_id == vrs_stream_id and record.record_type == "data":
                     data = record.get_data_bytes()
                     if data is None:
                         data = b""
@@ -229,7 +243,7 @@ class VRSReader:
         """Get the number of data records for the specified stream.
 
         Args:
-            stream_id: Target stream ID
+            stream_id: Target stream ID (user-specified)
 
         Returns:
             Number of data records
@@ -242,17 +256,13 @@ class VRSReader:
             raise RuntimeError("VRS file is not open")
 
         try:
+            # Convert user stream_id to VRS stream_id
+            vrs_stream_id = self._get_vrs_stream_id(stream_id)
+
             count = 0
             for record in self._reader:
-                try:
-                    if "-" in record.stream_id:
-                        record_numeric_id = int(record.stream_id.split("-")[-1])
-                    else:
-                        record_numeric_id = int(record.stream_id)
-                except (ValueError, AttributeError):
-                    continue
-
-                if record_numeric_id == stream_id and record.record_type == pyvrs.RecordType.DATA:
+                # Note: record.record_type is a string, not enum
+                if record.stream_id == vrs_stream_id and record.record_type == "data":
                     count += 1
             return count
         except Exception as e:
