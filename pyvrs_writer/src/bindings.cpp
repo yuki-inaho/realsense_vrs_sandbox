@@ -38,5 +38,15 @@ PYBIND11_MODULE(_pyvrs_writer, m) {
 
     .def("is_open",
          &pyvrs_writer::VRSWriter::isOpen,
-         "Check if the file is open");
+         "Check if the file is open")
+
+    .def("__enter__",
+         [](pyvrs_writer::VRSWriter& self) -> pyvrs_writer::VRSWriter& {
+           return self;
+         })
+
+    .def("__exit__",
+         [](pyvrs_writer::VRSWriter& self, py::object, py::object, py::object) {
+           self.close();
+         });
 }
