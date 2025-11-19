@@ -80,7 +80,8 @@ class RosbagToVRSConverter:
             "transform_cache": {},  # Cache Transform messages
             "stream_info_cache": {},  # Cache StreamInfo messages
             "device_info_cache": {},  # Cache Device Info KeyValue pairs
-            "sensor_info_cache": {}  # Cache Sensor Info messages
+            "sensor_info_cache": {},  # Cache Sensor Info messages
+            "options_cache": {}  # Cache Options messages
         }
 
     def convert(self) -> ConversionResult:
@@ -122,6 +123,7 @@ class RosbagToVRSConverter:
             self._cache_stream_info(reader)
             self._cache_device_info(reader)
             self._cache_sensor_info(reader)
+            self._cache_options(reader)
             self._write_configurations(writer)
 
             # Process messages in temporal order
@@ -332,6 +334,59 @@ class RosbagToVRSConverter:
                 if self.config.verbose:
                     print(f"Cached Sensor Info from {connection.topic}: {msg.value}")
 
+    def _cache_options(self, reader: Any) -> None:
+        """
+        Cache Options messages for Configuration record
+
+        Options topics:
+        - /device_0/sensor_*/option/*/value (25 topics)
+        - /device_0/sensor_*/option/*/description (25 topics)
+        """
+        options_dict = {}  # {option_name: {sensor, value, description}}
+
+        with reader:
+            # Find all option topics
+            option_connections = [
+                c for c in reader.connections
+                if '/option/' in c.topic
+            ]
+
+            if not option_connections:
+                if self.config.verbose:
+                    print("No Options topics found in ROSbag (skipping)")
+                return
+
+            for connection, timestamp, rawdata in reader.messages(connections=option_connections):
+                msg = reader.deserialize(rawdata, connection.msgtype)
+
+                # Parse topic: /device_0/sensor_X/option/OPTION_NAME/TYPE
+                parts = connection.topic.split('/')
+                if len(parts) < 6:
+                    continue  # Invalid topic format
+
+                sensor_id = parts[2]  # sensor_0, sensor_1, sensor_2
+                option_name = parts[4]  # Exposure, Gain, etc.
+                option_type = parts[5]  # value or description
+
+                # Initialize option entry if not exists
+                if option_name not in options_dict:
+                    options_dict[option_name] = {
+                        'sensor': sensor_id,
+                        'value': None,
+                        'description': None
+                    }
+
+                # Store value or description
+                if option_type == 'value':
+                    options_dict[option_name]['value'] = float(msg.data)
+                elif option_type == 'description':
+                    options_dict[option_name]['description'] = str(msg.data)
+
+            self._stats["options_cache"] = options_dict
+
+            if self.config.verbose:
+                print(f"Cached {len(options_dict)} Options")
+
     def _write_configurations(self, writer: VRSWriter) -> None:
         """Write Configuration records for each stream"""
         for topic, stream_config in self.config.topic_mapping.items():
@@ -351,6 +406,8 @@ class RosbagToVRSConverter:
                 self._write_device_info_configuration(writer, stream_config, topic)
             elif stream_config.stream_type == "sensor_info":
                 self._write_sensor_info_configuration(writer, stream_config, topic)
+            elif stream_config.stream_type == "options":
+                self._write_options_configuration(writer, stream_config, topic)
 
     def _write_color_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
         """Write Color stream Configuration record"""
@@ -610,6 +667,36 @@ class RosbagToVRSConverter:
         if self.config.verbose:
             print(f"Wrote Configuration for stream {stream_config.stream_id} (Sensor Info): {config_data['sensor_name']} ({sensor_id})")
 
+    def _write_options_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
+        """Write Options Configuration record"""
+        options_dict = self._stats.get("options_cache", {})
+
+        if not options_dict:
+            if self.config.verbose:
+                print(f"No Options found in ROSbag, skipping stream {stream_config.stream_id}")
+            return
+
+        # Build options array
+        options_array = []
+        for name, data in sorted(options_dict.items()):
+            options_array.append({
+                "name": name,
+                "sensor": data['sensor'],
+                "value": data['value'],
+                "description": data['description']
+            })
+
+        config_data = {
+            "info_type": "options",
+            "total_options": len(options_array),
+            "options": options_array
+        }
+
+        writer.write_configuration(stream_config.stream_id, config_data)
+
+        if self.config.verbose:
+            print(f"Wrote Configuration for stream {stream_config.stream_id} (Options): {len(options_array)} options")
+
     def _process_messages(self, reader: Any, writer: VRSWriter) -> None:
         """Process all messages in temporal order"""
         target_topics = list(self.config.topic_mapping.keys())
@@ -796,6 +883,12 @@ RGBD_IMU_STREAMS = {
         stream_type="sensor_info",
         recordable_type_id="ForwardCamera",
         flavor="RealSense_D435i_Sensor2_Info|id:2004"
+    ),
+    "/device_0/sensor_0/option": StreamConfig(
+        stream_id=2005,
+        stream_type="options",
+        recordable_type_id="ForwardCamera",
+        flavor="RealSense_D435i_Options|id:2005"
     ),
 }
 

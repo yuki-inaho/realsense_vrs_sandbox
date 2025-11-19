@@ -31,9 +31,15 @@
 
 | データ種別 | ステータス | ストリームID | 説明 |
 |-----------|----------|------------|------|
-| Color Image | 実装済み | 1001 | RGB画像 + カメラ内部パラメータ |
-| Depth Image | 実装済み | 1002 | Depth画像 + depth_scale + カメラパラメータ |
-| IMU (Accel/Gyro) | 未実装 | - | 加速度・ジャイロセンサー |
+| Color Image | 実装済み | 1001 | RGB画像 + カメラ内部パラメータ + StreamInfo (fps, encoding) |
+| Depth Image | 実装済み | 1002 | Depth画像 + depth_scale + カメラパラメータ + StreamInfo (fps, encoding) |
+| Transform | 実装済み | 1005, 1006 | カメラ外部パラメータ (Depth, Color) |
+| IMU (Accel) | 実装済み | 1003 | 加速度センサー + StreamInfo (fps, encoding) |
+| IMU (Gyro) | 実装済み | 1004 | ジャイロセンサー + StreamInfo (fps, encoding) |
+| Device Info | 実装済み | 2001 | デバイス情報 (名称, SN, FW version等) |
+| Sensor Info | 実装済み | 2002-2004 | センサー情報 (Stereo/RGB/Motion Module) |
+| Options | 実装済み | 2005 | センサー設定オプション (25オプション: Exposure, Gain, Laser Power等) |
+| Metadata | 未実装 | - | 画像・IMUメタデータ (14,219メッセージ) |
 
 ---
 
