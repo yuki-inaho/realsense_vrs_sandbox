@@ -179,15 +179,24 @@ class VRSReader:
             for record in self._reader:
                 # Note: record.record_type is a string, not enum
                 if record.stream_id == vrs_stream_id and record.record_type == "configuration":
-                    # Get data from the record
-                    data = record.get_data_bytes()
-                    if data:
-                        try:
-                            # Try to decode as JSON
-                            return json.loads(data.decode("utf-8"))
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            # Return as raw dict if not JSON
-                            return {"data": data}
+                    # Get data from metadata_blocks (DataLayout)
+                    if record.n_metadata_blocks > 0:
+                        metadata = record.metadata_blocks[0]
+                        # Extract config_json field from metadata
+                        if "config_json" in metadata:
+                            config_json_str = metadata["config_json"]
+                            try:
+                                # Try to decode as JSON
+                                return json.loads(config_json_str)
+                            except json.JSONDecodeError:
+                                # Return as string if not valid JSON
+                                return {"config_json": config_json_str}
+                        else:
+                            # Return metadata directly if no config_json field
+                            return metadata
+                    else:
+                        # No metadata blocks, return empty dict
+                        return {}
 
             # If no configuration found, raise error
             raise ValueError(f"No configuration record found for stream {stream_id}")
@@ -224,9 +233,16 @@ class VRSReader:
             for record in self._reader:
                 # Note: record.record_type is a string, not enum
                 if record.stream_id == vrs_stream_id and record.record_type == "data":
-                    data = record.get_data_bytes()
-                    if data is None:
-                        data = b""
+                    # Get data from custom_blocks (CUSTOM block)
+                    data = b""
+                    if record.n_custom_blocks > 0:
+                        # custom_blocks[0] contains the raw data
+                        custom_block = record.custom_blocks[0]
+                        if isinstance(custom_block, bytes):
+                            data = custom_block
+                        elif hasattr(custom_block, 'data'):
+                            data = custom_block.data
+                        # Otherwise, data remains empty bytes
 
                     yield {
                         "timestamp": record.timestamp,

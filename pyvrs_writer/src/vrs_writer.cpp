@@ -3,20 +3,52 @@
 #include <vrs/RecordFileWriter.h>
 #include <vrs/Recordable.h>
 #include <vrs/StreamId.h>
+#include <vrs/DataLayout.h>
+#include <vrs/DataPieces.h>
+#include <vrs/RecordFormat.h>
 #include <stdexcept>
 #include <map>
 #include <memory>
 
 namespace pyvrs_writer {
 
+// Configuration用DataLayout
+class ConfigDataLayout : public vrs::AutoDataLayout {
+public:
+  vrs::DataPieceString configJson{"config_json"};
+  vrs::AutoDataLayoutEnd endLayout;
+};
+
+// Data用DataLayout（メタデータ用、実データはCUSTOMブロック）
+class DataRecordDataLayout : public vrs::AutoDataLayout {
+public:
+  vrs::DataPieceValue<double> timestamp{"timestamp"};
+  vrs::AutoDataLayoutEnd endLayout;
+};
+
 // 簡易的なRecordableラッパークラス
 class SimpleRecordable : public vrs::Recordable {
+  static const uint32_t kConfigurationRecordFormatVersion = 1;
+  static const uint32_t kDataRecordFormatVersion = 1;
+
 public:
   SimpleRecordable(uint32_t streamId, const std::string& streamName)
     : vrs::Recordable(vrs::RecordableTypeId::UnitTest1, streamName),
       streamId_(streamId),
       configTimestamp_(0.0) {
     setRecordableIsActive(true);
+
+    // RecordFormatを登録
+    addRecordFormat(
+        vrs::Record::Type::CONFIGURATION,
+        kConfigurationRecordFormatVersion,
+        configDataLayout_.getContentBlock(),
+        {&configDataLayout_});
+    addRecordFormat(
+        vrs::Record::Type::DATA,
+        kDataRecordFormatVersion,
+        dataRecordDataLayout_.getContentBlock() + vrs::ContentBlock(vrs::ContentType::CUSTOM),
+        {&dataRecordDataLayout_});
   }
 
   // Configuration JSONを設定
@@ -27,21 +59,31 @@ public:
 
   // データレコードを作成
   void addDataRecord(double timestamp, const std::vector<uint8_t>& data) {
-    // DataSourceを使用してレコードを作成
-    vrs::DataSource dataSource(vrs::DataSourceChunk(data.data(), data.size()));
-    createRecord(timestamp, vrs::Record::Type::DATA, 1, dataSource);
+    // DataLayoutにtimestampを設定
+    dataRecordDataLayout_.timestamp.set(timestamp);
+
+    // DataSource: DataLayout + CUSTOM data block
+    vrs::DataSource dataSource(
+        dataRecordDataLayout_,
+        {data.data(), data.size()});
+    createRecord(timestamp, vrs::Record::Type::DATA, kDataRecordFormatVersion, dataSource);
   }
 
   // Configuration recordを作成
   const vrs::Record* createConfigurationRecord() override {
     if (!configJson_.empty()) {
-      vrs::DataSource dataSource(
-        vrs::DataSourceChunk(configJson_.data(), configJson_.size())
-      );
-      return createRecord(configTimestamp_, vrs::Record::Type::CONFIGURATION, 1, dataSource);
+      // DataLayoutにJSON文字列を設定
+      configDataLayout_.configJson.stage(configJson_);
+
+      // DataSourceでDataLayoutを使用
+      return createRecord(
+          configTimestamp_,
+          vrs::Record::Type::CONFIGURATION,
+          kConfigurationRecordFormatVersion,
+          vrs::DataSource(configDataLayout_));
     }
     // 空のConfiguration recordを返す
-    return createRecord(0.0, vrs::Record::Type::CONFIGURATION, 1);
+    return createRecord(0.0, vrs::Record::Type::CONFIGURATION, kConfigurationRecordFormatVersion);
   }
 
   // State recordを作成（最小限の実装）
@@ -54,6 +96,8 @@ private:
   uint32_t streamId_;
   std::string configJson_;
   double configTimestamp_;
+  ConfigDataLayout configDataLayout_;
+  DataRecordDataLayout dataRecordDataLayout_;
 };
 
 class VRSWriter::Impl {

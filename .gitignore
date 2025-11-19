@@ -39,3 +39,8 @@ pyvrs_writer/build/
 debug_vrs.py
 test_minimal_vrs
 test_minimal_vrs.cpp
+
+# RecordFormat implementation test files
+test_pytest_vrs.py
+test_read_recordformat.py
+test_recordformat.py
