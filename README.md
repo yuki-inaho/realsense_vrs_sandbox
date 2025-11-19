@@ -101,7 +101,13 @@ apt-get install -y \
   liblz4-dev \
   libzstd-dev \
   libxxhash-dev \
-  ninja-build
+  ninja-build \
+  libjpeg-dev \
+  libturbojpeg-dev \
+  libpng-dev \
+  libeigen3-dev \
+  libgtest-dev \
+  googletest
 ```
 
 Build VRS library locally:
