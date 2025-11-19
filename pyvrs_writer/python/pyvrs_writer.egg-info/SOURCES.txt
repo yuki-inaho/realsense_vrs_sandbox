@@ -1,3 +1,4 @@
+README.md
 setup.py
 python/pyvrs_writer/__init__.py
 python/pyvrs_writer.egg-info/PKG-INFO
