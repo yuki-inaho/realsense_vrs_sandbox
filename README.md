@@ -89,6 +89,35 @@ uv run python stream_realsense_data.py data/rosbag/d435i_walk_around.bag \
 
 ## Development
 
+### pyvrs_writer C++ Extension Dependencies
+
+For building the `pyvrs_writer` C++ extension (VRS file writing support):
+
+```bash
+# Install C++ build dependencies (Ubuntu/Debian)
+apt-get install -y \
+  libboost-all-dev \
+  libfmt-dev \
+  liblz4-dev \
+  libzstd-dev \
+  libxxhash-dev \
+  ninja-build
+```
+
+Build VRS library locally:
+
+```bash
+# Build VRS from submodule
+cd third/vrs
+mkdir -p build
+cd build
+cmake -S .. -B . -G Ninja \
+  -DCMAKE_INSTALL_PREFIX=/home/user/realsense_vrs_sandbox/third/vrs_install \
+  -DCMAKE_BUILD_TYPE=Release
+ninja
+ninja install
+```
+
 ### Run tests
 
 ```bash
