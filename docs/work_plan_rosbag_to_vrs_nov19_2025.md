@@ -2584,6 +2584,34 @@ pip install vrs  # Linux/macOS対応、Windows版は開発中
 - [x] 手順4B.10: VRSReader でIMU読み込み動作確認（inspect_vrs.py で4ストリーム表示成功）
 - [x] 手順4B.11: コミット・プッシュ準備中
 
+### フェーズ 4C: Transform/Extrinsic変換実装 (カメラ外部パラメータ)
+- [ ] 手順4C.1: Transform/Extrinsicストリーム設計
+- [ ] 手順4C.2: Transform Configuration/Dataレコード仕様策定
+- [ ] 手順4C.3: RosbagToVRSConverterにTransform変換ロジック追加
+- [ ] 手順4C.4: Transform変換テスト実行
+- [ ] 手順4C.5: コミット・プッシュ
+
+### フェーズ 4D: Device/Sensor Info変換実装
+- [ ] 手順4D.1: Device/Sensor Infoストリーム設計
+- [ ] 手順4D.2: Info Configuration/Dataレコード仕様策定
+- [ ] 手順4D.3: RosbagToVRSConverterにInfo変換ロジック追加
+- [ ] 手順4D.4: Info変換テスト実行
+- [ ] 手順4D.5: コミット・プッシュ
+
+### フェーズ 4E: Metadata変換実装 (画像・IMU)
+- [ ] 手順4E.1: Metadataストリーム設計
+- [ ] 手順4E.2: Metadata Configuration/Dataレコード仕様策定
+- [ ] 手順4E.3: RosbagToVRSConverterにMetadata変換ロジック追加
+- [ ] 手順4E.4: Metadata変換テスト実行
+- [ ] 手順4E.5: コミット・プッシュ
+
+### フェーズ 4F: Options変換実装 (センサーオプション設定)
+- [ ] 手順4F.1: Optionsストリーム設計
+- [ ] 手順4F.2: Options Configuration/Dataレコード仕様策定
+- [ ] 手順4F.3: RosbagToVRSConverterにOptions変換ロジック追加
+- [ ] 手順4F.4: Options変換テスト実行
+- [ ] 手順4F.5: コミット・プッシュ
+
 ### フェーズ 5: VRS Inspector/Playerスクリプト実装
 - [x] 手順5.1: VRS Inspectorスクリプト作成 (TDD)
 - [x] 手順5.2: VRS Inspector実装 (GREEN)
@@ -2789,6 +2817,7 @@ git push -u origin <branch-name>
 | 2025-11-19 | 11:29:00 UTC+0000 | Claude (Sonnet 4.5) | **手順4B.1-4B.3完了: IMUストリーム設計・仕様策定** | IMUメッセージ構造確認（Accel: linear_acceleration使用、Gyro: angular_velocity使用）、サンプリングレート実測（Accel: 44Hz, Gyro: 55Hz）。docs/imu_stream_design.md作成完了（266行）。VRSストリームID割り当て（1003: Accel, 1004: Gyro）、Configurationレコード仕様（sensor_type, unit, sample_rate, axes）、Dataレコード仕様（24 bytes, struct.pack('<ddd', x, y, z)）、実装方針、テスト戦略を含む完全設計書作成。手順4B.1-4B.3完了 [x]。次: 手順4B.4開始（VRSWriter IMU機能追加） |
 | 2025-11-19 | 11:35:53 UTC+0000 | Claude (Sonnet 4.5) | **スコープ拡大: 全ROSbagデータ格納要求** | ユーザー要求: ROSbagに入っている情報をほぼすべて格納。d435i_walking.bag全トピック確認（83 topics）。カテゴリ分類完了: Image Data (2), Camera Info (2), IMU Data (6), Transform/Extrinsic (2), Device/Sensor Info (8), Metadata (2), Options (60), Other (1)。Phase拡張計画: 4B (IMU+IMU intrinsic), 4C (Transform), 4D (Device/Sensor Info), 4E (Metadata), 4F (Options+Other)。現在Phase 4B実装中。次: Phase 4B IMU変換ロジック実装継続 |
 | 2025-11-19 | 11:41:47 UTC+0000 | Claude (Sonnet 4.5) | **Phase 4B完了: RGB-D + IMU変換実装** | ユーザー指示によりPHASE_4*命名を削除（RGBD_STREAMS, RGBD_IMU_STREAMSに変更）。IMU変換ロジック実装完了: _process_imu_accel_message(), _process_imu_gyro_message(), _write_imu_accel_configuration(), _write_imu_gyro_configuration()メソッド追加。convert_to_vrs.py に --imu オプション追加（create_rgbd_imu_config()使用）。d435i_walking.bag変換テスト成功: 4ストリーム（Color 260, Depth 261, Accel 674, Gyro 593）、1788 messages、18.32秒、圧縮率36.72%。VRS Inspector確認成功: 各IMUストリームのsensor_type, unit, sample_rate, axes正常表示。**Phase 4B完全実装完了** ✓。次: コミット・プッシュ |
+| 2025-11-19 | 11:44:06 UTC+0000 | Claude (Sonnet 4.5) | **Phase 4B コミット・プッシュ完了 & Phase 4C-4F計画** | コミット022366f作成・プッシュ成功（4ファイル変更、461行追加）。成果物: docs/imu_stream_design.md（新規）、scripts/rosbag_to_vrs_converter.py（IMU変換ロジック追加）、convert_to_vrs.py（--imuオプション追加）、docs/work_plan更新。Phase 4C-4Fチェックリスト追加完了: 4C (Transform/Extrinsic, 5タスク)、4D (Device/Sensor Info, 5タスク)、4E (Metadata, 5タスク)、4F (Options, 5タスク)。全ROSbagデータ格納への道筋確立。次: Phase 4C開始またはユーザー指示待ち |
 
 ---
 
