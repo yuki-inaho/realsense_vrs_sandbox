@@ -43,6 +43,7 @@ Examples:
 Supported Data:
   - Color Image: RGB camera stream with intrinsic parameters
   - Depth Image: Depth camera stream with intrinsic parameters and depth scale
+  - Transform: Camera extrinsic parameters (included by default)
   - IMU Data: Accelerometer and Gyroscope (optional, use --imu)
   - Camera Info: K matrix, distortion coefficients, distortion model
 
@@ -91,7 +92,7 @@ Features:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 1.0.0 (RGB-D + IMU support)",
+        version="%(prog)s 1.0.0 (RGB-D + IMU + Transform support)",
     )
 
     args = parser.parse_args()

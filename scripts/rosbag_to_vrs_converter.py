@@ -76,7 +76,8 @@ class RosbagToVRSConverter:
         self._stats: dict[str, Any] = {
             "total_messages": 0,
             "messages_per_stream": {},
-            "camera_info_cache": {}  # Cache CameraInfo messages
+            "camera_info_cache": {},  # Cache CameraInfo messages
+            "transform_cache": {}  # Cache Transform messages (Phase 4C)
         }
 
     def convert(self) -> ConversionResult:
@@ -112,8 +113,9 @@ class RosbagToVRSConverter:
             # Create streams
             self._create_streams(writer)
 
-            # Write configuration records (requires CameraInfo from bag)
+            # Write configuration records (requires CameraInfo and Transform from bag)
             self._cache_camera_info(reader)
+            self._cache_transforms(reader)
             self._write_configurations(writer)
 
             # Process messages in temporal order
@@ -199,6 +201,42 @@ class RosbagToVRSConverter:
                 if len(self._stats["camera_info_cache"]) >= len(camera_info_topics):
                     break
 
+    def _cache_transforms(self, reader: Any) -> None:
+        """
+        Cache Transform messages for Configuration records (Phase 4C)
+
+        Transform topics:
+        - /device_0/sensor_0/Depth_0/tf/0 (Depth Extrinsic)
+        - /device_0/sensor_1/Color_0/tf/0 (Color Extrinsic)
+        """
+        transform_topics = [
+            "/device_0/sensor_0/Depth_0/tf/0",
+            "/device_0/sensor_1/Color_0/tf/0"
+        ]
+
+        with reader:
+            connections = [x for x in reader.connections if x.topic in transform_topics]
+
+            # Transform topics may not exist in all bags (optional)
+            if not connections:
+                if self.config.verbose:
+                    print("No Transform topics found in ROSbag (skipping)")
+                return
+
+            for connection, timestamp, rawdata in reader.messages(connections=connections):
+                # Deserialize message
+                msg = reader.deserialize(rawdata, connection.msgtype)
+
+                # Cache by topic
+                self._stats["transform_cache"][connection.topic] = msg
+
+                if self.config.verbose:
+                    print(f"Cached Transform from {connection.topic}")
+
+                # Stop after getting one message per topic (Transforms are static)
+                if len(self._stats["transform_cache"]) >= len(transform_topics):
+                    break
+
     def _write_configurations(self, writer: VRSWriter) -> None:
         """Write Configuration records for each stream"""
         for topic, stream_config in self.config.topic_mapping.items():
@@ -210,6 +248,10 @@ class RosbagToVRSConverter:
                 self._write_imu_accel_configuration(writer, stream_config, topic)
             elif stream_config.stream_type == "imu_gyro":
                 self._write_imu_gyro_configuration(writer, stream_config, topic)
+            elif stream_config.stream_type == "transform_depth":
+                self._write_transform_depth_configuration(writer, stream_config, topic)
+            elif stream_config.stream_type == "transform_color":
+                self._write_transform_color_configuration(writer, stream_config, topic)
 
     def _write_color_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
         """Write Color stream Configuration record"""
@@ -293,6 +335,80 @@ class RosbagToVRSConverter:
 
         if self.config.verbose:
             print(f"Wrote Configuration for stream {stream_config.stream_id} (Gyro): {config_data['sample_rate']} Hz")
+
+    def _write_transform_depth_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
+        """Write Depth Extrinsic Configuration record (Phase 4C)"""
+        transform_msg = self._stats["transform_cache"].get(topic)
+
+        if transform_msg is None:
+            # Default to identity transform if not found
+            config_data = {
+                "transform_type": "static",
+                "sensor_name": "Depth",
+                "reference_frame": "device_0",
+                "translation": {"x": 0.0, "y": 0.0, "z": 0.0, "unit": "meters"},
+                "rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0, "format": "quaternion"}
+            }
+            if self.config.verbose:
+                print(f"Depth Transform not found, using identity transform (default)")
+        else:
+            config_data = {
+                "transform_type": "static",
+                "sensor_name": "Depth",
+                "reference_frame": "device_0",
+                "translation": {
+                    "x": float(transform_msg.translation.x),
+                    "y": float(transform_msg.translation.y),
+                    "z": float(transform_msg.translation.z),
+                    "unit": "meters"
+                },
+                "rotation": {
+                    "x": float(transform_msg.rotation.x),
+                    "y": float(transform_msg.rotation.y),
+                    "z": float(transform_msg.rotation.z),
+                    "w": float(transform_msg.rotation.w),
+                    "format": "quaternion"
+                }
+            }
+
+        writer.write_configuration(stream_config.stream_id, config_data)
+
+        if self.config.verbose:
+            print(f"Wrote Configuration for stream {stream_config.stream_id} (Depth Extrinsic): "
+                  f"T=({config_data['translation']['x']:.6f}, {config_data['translation']['y']:.6f}, {config_data['translation']['z']:.6f})")
+
+    def _write_transform_color_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
+        """Write Color Extrinsic Configuration record (Phase 4C)"""
+        transform_msg = self._stats["transform_cache"].get(topic)
+
+        if transform_msg is None:
+            # Raise error if Color transform is missing (should be present in D435i bags)
+            raise ValueError(f"Transform message not found for topic: {topic}")
+
+        config_data = {
+            "transform_type": "static",
+            "sensor_name": "Color",
+            "reference_frame": "device_0",
+            "translation": {
+                "x": float(transform_msg.translation.x),
+                "y": float(transform_msg.translation.y),
+                "z": float(transform_msg.translation.z),
+                "unit": "meters"
+            },
+            "rotation": {
+                "x": float(transform_msg.rotation.x),
+                "y": float(transform_msg.rotation.y),
+                "z": float(transform_msg.rotation.z),
+                "w": float(transform_msg.rotation.w),
+                "format": "quaternion"
+            }
+        }
+
+        writer.write_configuration(stream_config.stream_id, config_data)
+
+        if self.config.verbose:
+            print(f"Wrote Configuration for stream {stream_config.stream_id} (Color Extrinsic): "
+                  f"T=({config_data['translation']['x']:.6f}, {config_data['translation']['y']:.6f}, {config_data['translation']['z']:.6f})")
 
     def _process_messages(self, reader: Any, writer: VRSWriter) -> None:
         """Process all messages in temporal order"""
@@ -413,7 +529,7 @@ class RosbagToVRSConverter:
         return max(0.0, duration_sec)
 
 
-# RGB-D stream mapping (Color + Depth)
+# RGB-D stream mapping (Color + Depth + Transform)
 RGBD_STREAMS = {
     "/device_0/sensor_1/Color_0/image/data": StreamConfig(
         stream_id=1001,
@@ -427,10 +543,22 @@ RGBD_STREAMS = {
         recordable_type_id="ForwardCamera",
         flavor="RealSense_D435i_Depth|id:1002"
     ),
+    "/device_0/sensor_0/Depth_0/tf/0": StreamConfig(
+        stream_id=1005,
+        stream_type="transform_depth",
+        recordable_type_id="ForwardCamera",
+        flavor="RealSense_D435i_Depth_Extrinsic|id:1005"
+    ),
+    "/device_0/sensor_1/Color_0/tf/0": StreamConfig(
+        stream_id=1006,
+        stream_type="transform_color",
+        recordable_type_id="ForwardCamera",
+        flavor="RealSense_D435i_Color_Extrinsic|id:1006"
+    ),
 }
 
 
-# RGB-D + IMU stream mapping
+# RGB-D + IMU stream mapping (Transform included via RGBD_STREAMS)
 RGBD_IMU_STREAMS = {
     **RGBD_STREAMS,
     "/device_0/sensor_2/Accel_0/imu/data": StreamConfig(
@@ -449,7 +577,7 @@ RGBD_IMU_STREAMS = {
 
 
 def create_rgbd_config(compression: str = "lz4", verbose: bool = False) -> ConverterConfig:
-    """Create RGB-D converter configuration (Color + Depth only)"""
+    """Create RGB-D converter configuration (Color + Depth + Transform)"""
     return ConverterConfig(
         topic_mapping=RGBD_STREAMS,
         phase="rgbd",
@@ -459,7 +587,7 @@ def create_rgbd_config(compression: str = "lz4", verbose: bool = False) -> Conve
 
 
 def create_rgbd_imu_config(compression: str = "lz4", verbose: bool = False) -> ConverterConfig:
-    """Create RGB-D + IMU converter configuration"""
+    """Create RGB-D + IMU + Transform converter configuration"""
     return ConverterConfig(
         topic_mapping=RGBD_IMU_STREAMS,
         phase="rgbd_imu",
