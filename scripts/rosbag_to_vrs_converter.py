@@ -9,10 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# ROSbag reader (support both ROS1 and ROS2)
+# ROSbag reader (support both ROS1 and ROS2 via AnyReader)
 try:
-    from rosbags.rosbag1 import Reader as Rosbag1Reader  # type: ignore
-    from rosbags.rosbag2 import Reader as Rosbag2Reader  # type: ignore
+    from rosbags.highlevel import AnyReader  # type: ignore
 except ImportError:
     raise ImportError("rosbags library is required. Install with: uv add rosbags")
 
@@ -146,24 +145,13 @@ class RosbagToVRSConverter:
 
         return result
 
-    def _open_rosbag(self) -> Any:  # Returns Rosbag1Reader or Rosbag2Reader
+    def _open_rosbag(self) -> Any:  # Returns AnyReader
         """Open ROSbag with auto-detection of format (ROS1 or ROS2)"""
-        # Try ROS2 first (directory-based)
-        if self.rosbag_path.is_dir():
-            return Rosbag2Reader(self.rosbag_path)
-
-        # Try ROS1 (single .bag file)
-        if self.rosbag_path.suffix == ".bag":
-            return Rosbag1Reader(self.rosbag_path)
-
-        # Fallback: Try ROS1 first, then ROS2
+        # AnyReader automatically detects ROSbag1 or ROSbag2 format
         try:
-            return Rosbag1Reader(self.rosbag_path)
-        except Exception:
-            try:
-                return Rosbag2Reader(self.rosbag_path)
-            except Exception as e:
-                raise ValueError(f"Cannot open ROSbag: {e}") from e
+            return AnyReader([self.rosbag_path])
+        except Exception as e:
+            raise ValueError(f"Cannot open ROSbag: {e}") from e
 
     def _create_streams(self, writer: VRSWriter) -> None:
         """Create VRS streams based on topic mapping"""
@@ -186,12 +174,12 @@ class RosbagToVRSConverter:
         Cache CameraInfo messages for Configuration records
 
         CameraInfo topics:
-        - /device_0/sensor_1/Color_0/camera_info (for Color stream)
-        - /device_0/sensor_0/Depth_0/camera_info (for Depth stream)
+        - /device_0/sensor_1/Color_0/info/camera_info (for Color stream)
+        - /device_0/sensor_0/Depth_0/info/camera_info (for Depth stream)
         """
         camera_info_topics = [
-            "/device_0/sensor_1/Color_0/camera_info",
-            "/device_0/sensor_0/Depth_0/camera_info"
+            "/device_0/sensor_1/Color_0/info/camera_info",
+            "/device_0/sensor_0/Depth_0/info/camera_info"
         ]
 
         with reader:
@@ -222,7 +210,7 @@ class RosbagToVRSConverter:
 
     def _write_color_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
         """Write Color stream Configuration record"""
-        camera_info_topic = "/device_0/sensor_1/Color_0/camera_info"
+        camera_info_topic = "/device_0/sensor_1/Color_0/info/camera_info"
         camera_info = self._stats["camera_info_cache"].get(camera_info_topic)
 
         if camera_info is None:
@@ -232,8 +220,8 @@ class RosbagToVRSConverter:
             "width": int(camera_info.width),
             "height": int(camera_info.height),
             "encoding": "rgb8",  # Default, will be overridden by actual message encoding
-            "camera_k": list(camera_info.k),  # 9 elements
-            "camera_d": list(camera_info.d),  # 5 elements (distortion coefficients)
+            "camera_k": list(camera_info.K),  # 9 elements
+            "camera_d": list(camera_info.D),  # 5 elements (distortion coefficients)
             "distortion_model": camera_info.distortion_model,
             "frame_id": camera_info.header.frame_id  # Store frame_id in configuration
         }
@@ -245,7 +233,7 @@ class RosbagToVRSConverter:
 
     def _write_depth_configuration(self, writer: VRSWriter, stream_config: StreamConfig, topic: str) -> None:
         """Write Depth stream Configuration record"""
-        camera_info_topic = "/device_0/sensor_0/Depth_0/camera_info"
+        camera_info_topic = "/device_0/sensor_0/Depth_0/info/camera_info"
         camera_info = self._stats["camera_info_cache"].get(camera_info_topic)
 
         if camera_info is None:
@@ -255,8 +243,8 @@ class RosbagToVRSConverter:
             "width": int(camera_info.width),
             "height": int(camera_info.height),
             "encoding": "16UC1",  # Depth encoding
-            "camera_k": list(camera_info.k),
-            "camera_d": list(camera_info.d),
+            "camera_k": list(camera_info.K),
+            "camera_d": list(camera_info.D),
             "distortion_model": camera_info.distortion_model,
             "depth_scale": 0.001,  # mm -> meters
             "frame_id": camera_info.header.frame_id  # Store frame_id in configuration
