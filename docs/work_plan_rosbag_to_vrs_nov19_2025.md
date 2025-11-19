@@ -327,6 +327,943 @@ pip install vrs  # Linux/macOS対応、Windows版は開発中
 
 ---
 
+### フェーズ 1A: pyvrs_writerパッケージ作成 (C++ + pybind11)
+
+このフェーズでは、VRS C++ライブラリをsubmoduleとして追加し、pybind11でPythonバインディングを作成します。
+
+#### 手順 1A.1: VRS C++ライブラリをgit submoduleとして追加
+
+- [ ] 🖐 **操作**: third/パーティディレクトリを作成し、VRSリポジトリをsubmoduleとして追加
+  ```bash
+  cd /home/user/realsense_vrs_sandbox
+  mkdir -p third
+  git submodule add https://github.com/facebookresearch/vrs.git third/vrs
+  git submodule update --init --recursive
+  ```
+
+- [ ] 🔎 **確認**: VRSリポジトリがクローンされていることを確認
+  ```bash
+  ls -la third/vrs/
+  test -f third/vrs/CMakeLists.txt && echo "VRS submodule追加成功" || echo "VRS submodule追加失敗"
+  ```
+  **期待結果:** `VRS submodule追加成功` と表示され、third/vrs/以下にVRSのソースコードが存在すること
+
+- [ ] 🧪 **テスト**: .gitmodulesファイルの存在確認
+  ```bash
+  cat .gitmodules | grep "third/vrs" && echo "submodule設定OK" || echo "submodule設定NG"
+  ```
+  **期待:** `submodule設定OK` と表示
+
+- [ ] 🛠 **エラー時対処**:
+  - `fatal: remote error: upload-pack: not our ref`: ネットワークエラーまたはURL間違い。再試行または手動clone
+  - `already exists in the index`: 既存のsubmoduleがある場合、`git rm --cached third/vrs` で削除後に再追加
+  - 再帰的submodule初期化失敗: `cd third/vrs && git submodule update --init --recursive`
+
+#### 手順 1A.2: システム依存関係の確認とインストール
+
+- [ ] 🖐 **操作**: VRSビルドに必要な依存関係をインストール
+  ```bash
+  # cmakeバージョン確認（3.10以上必要）
+  cmake --version
+
+  # 依存ライブラリのインストール（Ubuntuの場合）
+  apt-get update
+  apt-get install -y build-essential cmake libboost-all-dev liblz4-dev libzstd-dev libfmt-dev
+  ```
+
+- [ ] 🔎 **確認**: 依存関係がインストールされていることを確認
+  ```bash
+  dpkg -l | grep -E "(cmake|libboost|liblz4|libzstd|libfmt)" | head -5
+  cmake --version | grep "version"
+  ```
+  **期待結果:** cmake 3.10以上、各ライブラリがインストール済みと表示されること
+
+- [ ] 🧪 **テスト**: cmakeでVRSのビルド設定テスト
+  ```bash
+  mkdir -p third/vrs/build_test
+  cd third/vrs/build_test
+  cmake .. -DCMAKE_BUILD_TYPE=Release
+  cd ../../..
+  rm -rf third/vrs/build_test
+  ```
+  **期待:** エラーなくcmakeが成功すること
+
+- [ ] 🛠 **エラー時対処**:
+  - `cmake: command not found`: `apt-get install cmake`
+  - `Could NOT find Boost`: `apt-get install libboost-all-dev`
+  - `Could NOT find lz4`: `apt-get install liblz4-dev`
+  - `Could NOT find fmt`: `apt-get install libfmt-dev`
+  - cmakeバージョンが古い: `pip install cmake --upgrade` またはソースビルド
+
+#### 手順 1A.3: pyvrs_writerディレクトリ構造の作成
+
+- [ ] 🖐 **操作**: pyvrs_writerパッケージのディレクトリ構造を作成
+  ```bash
+  cd /home/user/realsense_vrs_sandbox
+  mkdir -p pyvrs_writer/{src,include,tests,python_tests,python}
+  ```
+
+- [ ] 🔎 **確認**: ディレクトリ構造が作成されていることを確認
+  ```bash
+  tree -L 2 pyvrs_writer/ || ls -R pyvrs_writer/
+  ```
+  **期待結果:** 以下の構造が作成されていること
+  ```
+  pyvrs_writer/
+  ├── src/          (C++実装)
+  ├── include/      (C++ヘッダー)
+  ├── tests/        (gtestテストコード)
+  ├── python_tests/ (Pytestテストコード)
+  └── python/       (Pythonパッケージ)
+  ```
+
+- [ ] 🧪 **テスト**: 各ディレクトリの存在確認
+  ```bash
+  for dir in src include tests python_tests python; do
+    test -d pyvrs_writer/$dir && echo "✓ $dir" || echo "✗ $dir"
+  done
+  ```
+  **期待:** 全ディレクトリに✓が付くこと
+
+- [ ] 🛠 **エラー時対処**:
+  - `mkdir: cannot create directory`: 権限不足。`sudo`を使用するか、親ディレクトリの権限確認
+
+#### 手順 1A.4: CMakeLists.txtの作成
+
+- [ ] 🖐 **操作**: pyvrs_writer/CMakeLists.txtを作成
+  ```cmake
+  # pyvrs_writer/CMakeLists.txt
+  cmake_minimum_required(VERSION 3.10)
+  project(pyvrs_writer VERSION 0.1.0 LANGUAGES CXX)
+
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+  # VRS submoduleをビルド
+  add_subdirectory(${CMAKE_SOURCE_DIR}/../third/vrs ${CMAKE_BINARY_DIR}/vrs)
+
+  # pybind11の追加
+  find_package(pybind11 CONFIG)
+  if(NOT pybind11_FOUND)
+    # fallback: pip install pybind11でインストールされたpybind11を使用
+    execute_process(
+      COMMAND python3 -m pybind11 --cmakedir
+      OUTPUT_VARIABLE pybind11_DIR
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    find_package(pybind11 CONFIG REQUIRED)
+  endif()
+
+  # インクルードディレクトリ
+  include_directories(
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/../third/vrs
+  )
+
+  # VRSWriterラッパーライブラリ
+  add_library(vrs_writer_core STATIC
+    src/vrs_writer.cpp
+  )
+
+  target_link_libraries(vrs_writer_core
+    vrs::vrs
+  )
+
+  # pybind11バインディング
+  pybind11_add_module(_pyvrs_writer
+    src/bindings.cpp
+  )
+
+  target_link_libraries(_pyvrs_writer PRIVATE
+    vrs_writer_core
+  )
+
+  # gtestの追加（オプション）
+  option(BUILD_TESTS "Build tests" ON)
+  if(BUILD_TESTS)
+    enable_testing()
+    find_package(GTest)
+    if(GTest_FOUND)
+      add_subdirectory(tests)
+    endif()
+  endif()
+  ```
+
+- [ ] 🔎 **確認**: CMakeLists.txtが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/CMakeLists.txt | head -10
+  test -f pyvrs_writer/CMakeLists.txt && echo "CMakeLists.txt作成成功" || echo "CMakeLists.txt作成失敗"
+  ```
+  **期待結果:** CMakeLists.txtが存在し、内容が表示されること
+
+- [ ] 🧪 **テスト**: CMakeLists.txtの構文チェック
+  ```bash
+  cd pyvrs_writer
+  mkdir -p build_syntax_test
+  cmake -S . -B build_syntax_test 2>&1 | head -20
+  rm -rf build_syntax_test
+  cd ..
+  ```
+  **期待:** 大きなエラーなくcmakeが処理を開始すること（ソースファイル未作成のエラーは許容）
+
+- [ ] 🛠 **エラー時対処**:
+  - `CMake Error: The source directory does not exist`: パスを確認
+  - `pybind11 not found`: `pip install pybind11[global]` でインストール
+  - VRSターゲットが見つからない: VRS submoduleのパスを確認
+
+#### 手順 1A.5: C++ VRSWriterラッパークラスのヘッダー設計
+
+- [ ] 🖐 **操作**: pyvrs_writer/include/vrs_writer.hを作成
+  ```cpp
+  // pyvrs_writer/include/vrs_writer.h
+  #pragma once
+
+  #include <string>
+  #include <memory>
+  #include <vector>
+  #include <cstdint>
+
+  namespace pyvrs_writer {
+
+  class VRSWriter {
+  public:
+    VRSWriter(const std::string& filepath);
+    ~VRSWriter();
+
+    // ストリームの追加
+    void addStream(uint32_t streamId, const std::string& streamName);
+
+    // Configurationレコードの書き込み
+    void writeConfiguration(uint32_t streamId, const std::string& jsonConfig);
+
+    // Dataレコードの書き込み
+    void writeData(uint32_t streamId, double timestamp, const std::vector<uint8_t>& data);
+
+    // ファイルのクローズ
+    void close();
+
+    // ファイルが開いているか確認
+    bool isOpen() const;
+
+  private:
+    class Impl;
+    std::unique_ptr<Impl> pImpl_;
+  };
+
+  }  // namespace pyvrs_writer
+  ```
+
+- [ ] 🔎 **確認**: ヘッダーファイルが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/include/vrs_writer.h | grep "class VRSWriter"
+  test -f pyvrs_writer/include/vrs_writer.h && echo "ヘッダー作成成功" || echo "ヘッダー作成失敗"
+  ```
+  **期待結果:** ヘッダーファイルが存在し、VRSWriterクラスが定義されていること
+
+- [ ] 🧪 **テスト**: ヘッダーファイルの構文チェック
+  ```bash
+  g++ -std=c++17 -fsyntax-only -I pyvrs_writer/include pyvrs_writer/include/vrs_writer.h 2>&1 || echo "構文エラーあり"
+  ```
+  **期待:** 構文エラーがないこと
+
+- [ ] 🛠 **エラー時対処**:
+  - `error: 'uint32_t' does not name a type`: `#include <cstdint>` を追加
+  - `error: 'string' is not a member of 'std'`: `#include <string>` を追加
+
+#### 手順 1A.6: gtestのセットアップ
+
+- [ ] 🖐 **操作**: gtestをインストールし、tests/CMakeLists.txtを作成
+  ```bash
+  # gtestのインストール
+  apt-get install -y libgtest-dev
+
+  # tests/CMakeLists.txtの作成
+  cat > pyvrs_writer/tests/CMakeLists.txt << 'EOF'
+  # pyvrs_writer/tests/CMakeLists.txt
+
+  add_executable(vrs_writer_test
+    test_vrs_writer.cpp
+  )
+
+  target_link_libraries(vrs_writer_test
+    vrs_writer_core
+    GTest::gtest
+    GTest::gtest_main
+  )
+
+  add_test(NAME VRSWriterTest COMMAND vrs_writer_test)
+  EOF
+  ```
+
+- [ ] 🔎 **確認**: gtestがインストールされ、CMakeLists.txtが作成されていることを確認
+  ```bash
+  dpkg -l | grep libgtest
+  cat pyvrs_writer/tests/CMakeLists.txt
+  ```
+  **期待結果:** gtestがインストール済みで、tests/CMakeLists.txtが存在すること
+
+- [ ] 🧪 **テスト**: gtestの動作確認
+  ```bash
+  g++ -x c++ - -lgtest -lgtest_main -pthread << 'EOF'
+  #include <gtest/gtest.h>
+  TEST(SampleTest, TrueIsTrue) { EXPECT_TRUE(true); }
+  EOF
+  ./a.out && echo "gtest動作OK" || echo "gtest動作NG"
+  rm -f a.out
+  ```
+  **期待:** `gtest動作OK` と表示されること
+
+- [ ] 🛠 **エラー時対処**:
+  - `libgtest-dev: not found`: `apt-get update && apt-get install libgtest-dev`
+  - リンクエラー: `-lgtest -lgtest_main -pthread` を確認
+
+#### 手順 1A.7: C++ VRSWriterラッパークラステストの作成 (RED)
+
+- [ ] 🖐 **操作**: pyvrs_writer/tests/test_vrs_writer.cppを作成
+  ```cpp
+  // pyvrs_writer/tests/test_vrs_writer.cpp
+  #include <gtest/gtest.h>
+  #include "vrs_writer.h"
+  #include <filesystem>
+
+  namespace fs = std::filesystem;
+
+  class VRSWriterTest : public ::testing::Test {
+  protected:
+    void SetUp() override {
+      testFilePath_ = "/tmp/test_vrs_writer.vrs";
+      // テストファイルが存在する場合は削除
+      if (fs::exists(testFilePath_)) {
+        fs::remove(testFilePath_);
+      }
+    }
+
+    void TearDown() override {
+      // テストファイルをクリーンアップ
+      if (fs::exists(testFilePath_)) {
+        fs::remove(testFilePath_);
+      }
+    }
+
+    std::string testFilePath_;
+  };
+
+  TEST_F(VRSWriterTest, ConstructorCreatesFile) {
+    pyvrs_writer::VRSWriter writer(testFilePath_);
+    EXPECT_TRUE(writer.isOpen());
+  }
+
+  TEST_F(VRSWriterTest, AddStream) {
+    pyvrs_writer::VRSWriter writer(testFilePath_);
+    EXPECT_NO_THROW(writer.addStream(1001, "RGB Camera"));
+  }
+
+  TEST_F(VRSWriterTest, WriteConfiguration) {
+    pyvrs_writer::VRSWriter writer(testFilePath_);
+    writer.addStream(1001, "RGB Camera");
+    std::string config = R"({"width": 640, "height": 480})";
+    EXPECT_NO_THROW(writer.writeConfiguration(1001, config));
+  }
+
+  TEST_F(VRSWriterTest, WriteData) {
+    pyvrs_writer::VRSWriter writer(testFilePath_);
+    writer.addStream(1001, "RGB Camera");
+    std::vector<uint8_t> data = {0x01, 0x02, 0x03};
+    EXPECT_NO_THROW(writer.writeData(1001, 0.0, data));
+  }
+
+  TEST_F(VRSWriterTest, CloseFile) {
+    pyvrs_writer::VRSWriter writer(testFilePath_);
+    writer.close();
+    EXPECT_FALSE(writer.isOpen());
+  }
+
+  TEST_F(VRSWriterTest, FileExistsAfterClose) {
+    {
+      pyvrs_writer::VRSWriter writer(testFilePath_);
+      writer.addStream(1001, "Test");
+      writer.close();
+    }
+    EXPECT_TRUE(fs::exists(testFilePath_));
+  }
+  ```
+
+- [ ] 🔎 **確認**: テストファイルが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/tests/test_vrs_writer.cpp | grep "TEST_F"
+  test -f pyvrs_writer/tests/test_vrs_writer.cpp && echo "テストファイル作成成功" || echo "テストファイル作成失敗"
+  ```
+  **期待結果:** 6個のTEST_Fが定義されていること
+
+- [ ] 🧪 **テスト**: RED状態の確認（実装前なのでビルドエラーまたはテスト失敗）
+  ```bash
+  cd pyvrs_writer
+  mkdir -p build
+  cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Debug 2>&1 | grep -E "(error|Error)" | head -5
+  # エラーが出るはずなのでこれはOK
+  cd ../..
+  ```
+  **期待:** vrs_writer.cppが存在しないためビルドエラーが発生すること（これがRED状態）
+
+- [ ] 🛠 **エラー時対処**:
+  - テストがすでに通る: 実装が既に存在している可能性。src/vrs_writer.cppを確認
+
+#### 手順 1A.8: C++ VRSWriterラッパークラスの実装 (GREEN)
+
+- [ ] 🖐 **操作**: pyvrs_writer/src/vrs_writer.cppを作成
+  ```cpp
+  // pyvrs_writer/src/vrs_writer.cpp
+  #include "vrs_writer.h"
+  #include <vrs/RecordFileWriter.h>
+  #include <vrs/RecordFormat.h>
+  #include <stdexcept>
+
+  namespace pyvrs_writer {
+
+  class VRSWriter::Impl {
+  public:
+    std::unique_ptr<vrs::RecordFileWriter> writer;
+    bool isOpen = false;
+  };
+
+  VRSWriter::VRSWriter(const std::string& filepath)
+    : pImpl_(std::make_unique<Impl>()) {
+    pImpl_->writer = std::make_unique<vrs::RecordFileWriter>();
+
+    int result = pImpl_->writer->createFile(filepath);
+    if (result != 0) {
+      throw std::runtime_error("Failed to create VRS file: " + filepath);
+    }
+    pImpl_->isOpen = true;
+  }
+
+  VRSWriter::~VRSWriter() {
+    if (pImpl_ && pImpl_->isOpen) {
+      close();
+    }
+  }
+
+  void VRSWriter::addStream(uint32_t streamId, const std::string& streamName) {
+    if (!pImpl_->isOpen) {
+      throw std::runtime_error("VRS file is not open");
+    }
+
+    vrs::StreamId sid(vrs::RecordableTypeId::UnitTest1, streamId);
+    pImpl_->writer->addRecordable(sid, streamName);
+  }
+
+  void VRSWriter::writeConfiguration(uint32_t streamId, const std::string& jsonConfig) {
+    if (!pImpl_->isOpen) {
+      throw std::runtime_error("VRS file is not open");
+    }
+
+    vrs::StreamId sid(vrs::RecordableTypeId::UnitTest1, streamId);
+    // Configuration recordの書き込み実装
+    // TODO: 実際のVRS APIに合わせて実装
+  }
+
+  void VRSWriter::writeData(uint32_t streamId, double timestamp,
+                            const std::vector<uint8_t>& data) {
+    if (!pImpl_->isOpen) {
+      throw std::runtime_error("VRS file is not open");
+    }
+
+    vrs::StreamId sid(vrs::RecordableTypeId::UnitTest1, streamId);
+    // Data recordの書き込み実装
+    // TODO: 実際のVRS APIに合わせて実装
+  }
+
+  void VRSWriter::close() {
+    if (pImpl_->isOpen) {
+      pImpl_->writer->closeFile();
+      pImpl_->isOpen = false;
+    }
+  }
+
+  bool VRSWriter::isOpen() const {
+    return pImpl_->isOpen;
+  }
+
+  }  // namespace pyvrs_writer
+  ```
+
+- [ ] 🔎 **確認**: 実装ファイルが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/src/vrs_writer.cpp | grep "VRSWriter::"
+  test -f pyvrs_writer/src/vrs_writer.cpp && echo "実装ファイル作成成功" || echo "実装ファイル作成失敗"
+  ```
+  **期待結果:** VRSWriter::の各メソッド実装が存在すること
+
+- [ ] 🧪 **テスト**: GREEN状態の確認（ビルドとテスト実行）
+  ```bash
+  cd pyvrs_writer/build
+  cmake .. -DCMAKE_BUILD_TYPE=Debug
+  make -j$(nproc)
+  ctest --output-on-failure
+  cd ../..
+  ```
+  **期待:** ビルドが成功し、テストが全てPASSすること（これがGREEN状態）
+
+- [ ] 🛠 **エラー時対処**:
+  - `vrs/RecordFileWriter.h: No such file`: VRS submoduleのビルドを確認
+  - リンクエラー: CMakeLists.txtのtarget_link_librariesを確認
+  - テスト失敗: VRS APIの使用方法を公式ドキュメントで確認
+
+#### 手順 1A.9: pybind11バインディングの実装
+
+- [ ] 🖐 **操作**: pyvrs_writer/src/bindings.cppを作成
+  ```cpp
+  // pyvrs_writer/src/bindings.cpp
+  #include <pybind11/pybind11.h>
+  #include <pybind11/stl.h>
+  #include "vrs_writer.h"
+
+  namespace py = pybind11;
+
+  PYBIND11_MODULE(_pyvrs_writer, m) {
+    m.doc() = "Python bindings for VRS file writer";
+
+    py::class_<pyvrs_writer::VRSWriter>(m, "VRSWriter")
+      .def(py::init<const std::string&>(),
+           py::arg("filepath"),
+           "Create a new VRS file")
+
+      .def("add_stream",
+           &pyvrs_writer::VRSWriter::addStream,
+           py::arg("stream_id"),
+           py::arg("stream_name"),
+           "Add a new stream to the VRS file")
+
+      .def("write_configuration",
+           &pyvrs_writer::VRSWriter::writeConfiguration,
+           py::arg("stream_id"),
+           py::arg("json_config"),
+           "Write a configuration record")
+
+      .def("write_data",
+           &pyvrs_writer::VRSWriter::writeData,
+           py::arg("stream_id"),
+           py::arg("timestamp"),
+           py::arg("data"),
+           "Write a data record")
+
+      .def("close",
+           &pyvrs_writer::VRSWriter::close,
+           "Close the VRS file")
+
+      .def("is_open",
+           &pyvrs_writer::VRSWriter::isOpen,
+           "Check if the file is open")
+
+      .def("__enter__",
+           [](pyvrs_writer::VRSWriter& self) -> pyvrs_writer::VRSWriter& {
+             return self;
+           })
+
+      .def("__exit__",
+           [](pyvrs_writer::VRSWriter& self, py::object, py::object, py::object) {
+             self.close();
+           });
+  }
+  ```
+
+- [ ] 🔎 **確認**: バインディングファイルが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/src/bindings.cpp | grep "PYBIND11_MODULE"
+  test -f pyvrs_writer/src/bindings.cpp && echo "バインディング作成成功" || echo "バインディング作成失敗"
+  ```
+  **期待結果:** PYBIND11_MODULEマクロと各メソッドのdef定義が存在すること
+
+- [ ] 🧪 **テスト**: pybind11モジュールのビルド
+  ```bash
+  cd pyvrs_writer/build
+  cmake .. -DCMAKE_BUILD_TYPE=Release
+  make _pyvrs_writer -j$(nproc)
+  ls -lh _pyvrs_writer*.so
+  cd ../..
+  ```
+  **期待:** _pyvrs_writer.soファイルが生成されること
+
+- [ ] 🛠 **エラー時対処**:
+  - `pybind11/pybind11.h: No such file`: `pip install pybind11[global]`
+  - シンボル未定義エラー: vrs_writer_coreライブラリのリンクを確認
+
+#### 手順 1A.10: Pythonパッケージ構造の作成
+
+- [ ] 🖐 **操作**: pyvrs_writer/python/pyvrs_writer/__init__.pyを作成
+  ```bash
+  mkdir -p pyvrs_writer/python/pyvrs_writer
+
+  cat > pyvrs_writer/python/pyvrs_writer/__init__.py << 'EOF'
+  """pyvrs_writer: Python bindings for VRS file writing.
+
+  This package provides a Python interface to write VRS (Virtual Reality Stream)
+  files using the VRS C++ library.
+  """
+
+  from pathlib import Path
+  import sys
+
+  # C++拡張モジュールのインポート
+  try:
+      from ._pyvrs_writer import VRSWriter
+  except ImportError as e:
+      raise ImportError(
+          f"Failed to import C++ extension module: {e}\n"
+          "Make sure the module is built and installed correctly."
+      ) from e
+
+  __version__ = "0.1.0"
+  __all__ = ["VRSWriter"]
+  EOF
+  ```
+
+- [ ] 🔎 **確認**: Pythonパッケージが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/python/pyvrs_writer/__init__.py | head -10
+  test -f pyvrs_writer/python/pyvrs_writer/__init__.py && echo "Pythonパッケージ作成成功"
+  ```
+  **期待結果:** __init__.pyが存在し、VRSWriterのインポートコードが含まれること
+
+- [ ] 🧪 **テスト**: __init__.pyの構文チェック
+  ```bash
+  python3 -m py_compile pyvrs_writer/python/pyvrs_writer/__init__.py && echo "構文OK" || echo "構文エラー"
+  ```
+  **期待:** `構文OK` と表示されること
+
+- [ ] 🛠 **エラー時対処**:
+  - 構文エラー: Pythonのバージョンを確認（3.9+必要）
+
+#### 手順 1A.11: setup.pyの作成
+
+- [ ] 🖐 **操作**: pyvrs_writer/setup.pyを作成
+  ```python
+  # pyvrs_writer/setup.py
+  from setuptools import setup, Extension
+  from setuptools.command.build_ext import build_ext
+  import sys
+  import os
+  from pathlib import Path
+
+  class CMakeBuild(build_ext):
+      def run(self):
+          # CMakeを使用してビルド
+          import subprocess
+
+          build_temp = Path(self.build_temp)
+          build_temp.mkdir(parents=True, exist_ok=True)
+
+          # CMake configure
+          subprocess.check_call([
+              'cmake',
+              str(Path(__file__).parent.absolute()),
+              f'-DCMAKE_BUILD_TYPE=Release',
+          ], cwd=build_temp)
+
+          # CMake build
+          subprocess.check_call([
+              'cmake',
+              '--build', '.',
+              '--config', 'Release',
+              '--', '-j4'
+          ], cwd=build_temp)
+
+          # .soファイルをコピー
+          import shutil
+          so_file = list(build_temp.glob('_pyvrs_writer*.so'))[0]
+          dest = Path(self.build_lib) / 'pyvrs_writer'
+          dest.mkdir(parents=True, exist_ok=True)
+          shutil.copy(so_file, dest)
+
+  setup(
+      name='pyvrs_writer',
+      version='0.1.0',
+      author='Your Name',
+      description='Python bindings for VRS file writing',
+      long_description='',
+      packages=['pyvrs_writer'],
+      package_dir={'': 'python'},
+      ext_modules=[Extension('_pyvrs_writer', [])],
+      cmdclass={'build_ext': CMakeBuild},
+      zip_safe=False,
+      python_requires='>=3.9',
+  )
+  ```
+
+- [ ] 🔎 **確認**: setup.pyが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/setup.py | grep "setup("
+  test -f pyvrs_writer/setup.py && echo "setup.py作成成功"
+  ```
+  **期待結果:** setup.pyが存在し、CMakeBuildクラスが定義されていること
+
+- [ ] 🧪 **テスト**: setup.pyの構文チェック
+  ```bash
+  python3 -m py_compile pyvrs_writer/setup.py && echo "setup.py構文OK"
+  ```
+  **期待:** `setup.py構文OK` と表示されること
+
+- [ ] 🛠 **エラー時対処**:
+  - インデントエラー: Pythonのインデントを確認
+
+#### 手順 1A.12: Pythonテストケースの作成
+
+- [ ] 🖐 **操作**: pyvrs_writer/python_tests/test_pyvrs_writer.pyを作成
+  ```python
+  # pyvrs_writer/python_tests/test_pyvrs_writer.py
+  """Tests for pyvrs_writer Python bindings."""
+
+  import pytest
+  from pathlib import Path
+  import tempfile
+  import os
+
+  try:
+      from pyvrs_writer import VRSWriter
+  except ImportError:
+      pytest.skip("pyvrs_writer not installed", allow_module_level=True)
+
+
+  @pytest.fixture
+  def temp_vrs_file():
+      """Create a temporary VRS file path."""
+      with tempfile.NamedTemporaryFile(suffix='.vrs', delete=False) as f:
+        temp_path = f.name
+      yield temp_path
+      # Cleanup
+      if os.path.exists(temp_path):
+          os.remove(temp_path)
+
+
+  def test_vrs_writer_creation(temp_vrs_file):
+      """Test VRSWriter can be created."""
+      writer = VRSWriter(temp_vrs_file)
+      assert writer.is_open()
+      writer.close()
+
+
+  def test_vrs_writer_context_manager(temp_vrs_file):
+      """Test VRSWriter works as context manager."""
+      with VRSWriter(temp_vrs_file) as writer:
+          assert writer.is_open()
+
+      # After exiting context, file should be closed
+      assert not writer.is_open()
+
+
+  def test_add_stream(temp_vrs_file):
+      """Test adding a stream."""
+      with VRSWriter(temp_vrs_file) as writer:
+          writer.add_stream(1001, "RGB Camera")
+          # No exception should be raised
+
+
+  def test_write_configuration(temp_vrs_file):
+      """Test writing configuration."""
+      with VRSWriter(temp_vrs_file) as writer:
+          writer.add_stream(1001, "RGB Camera")
+          config = '{"width": 640, "height": 480}'
+          writer.write_configuration(1001, config)
+
+
+  def test_write_data(temp_vrs_file):
+      """Test writing data."""
+      with VRSWriter(temp_vrs_file) as writer:
+          writer.add_stream(1001, "Test Stream")
+          data = bytes([0x01, 0x02, 0x03, 0x04])
+          writer.write_data(1001, 0.0, data)
+
+
+  def test_file_exists_after_close(temp_vrs_file):
+      """Test VRS file exists after closing."""
+      with VRSWriter(temp_vrs_file) as writer:
+          writer.add_stream(1001, "Test")
+
+      assert os.path.exists(temp_vrs_file)
+      assert os.path.getsize(temp_vrs_file) > 0
+  ```
+
+- [ ] 🔎 **確認**: Pythonテストが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/python_tests/test_pyvrs_writer.py | grep "def test_"
+  test -f pyvrs_writer/python_tests/test_pyvrs_writer.py && echo "Pythonテスト作成成功"
+  ```
+  **期待結果:** 6個のテスト関数が定義されていること
+
+- [ ] 🧪 **テスト**: Pythonテストの構文チェック
+  ```bash
+  python3 -m py_compile pyvrs_writer/python_tests/test_pyvrs_writer.py && echo "テスト構文OK"
+  ```
+  **期待:** `テスト構文OK` と表示されること
+
+- [ ] 🛠 **エラー時対処**:
+  - pytest未インストール: `uv pip install pytest`
+
+#### 手順 1A.13: pyvrs_writerのビルドとインストール
+
+- [ ] 🖐 **操作**: pyvrs_writerをビルドしてインストール
+  ```bash
+  cd pyvrs_writer
+  python3 setup.py build_ext --inplace
+  pip install -e .
+  cd ..
+  ```
+
+- [ ] 🔎 **確認**: pyvrs_writerがインストールされていることを確認
+  ```bash
+  python3 -c "import pyvrs_writer; print(f'pyvrs_writer version: {pyvrs_writer.__version__}')"
+  python3 -c "from pyvrs_writer import VRSWriter; print('VRSWriter imported successfully')"
+  ```
+  **期待結果:** `pyvrs_writer version: 0.1.0` と `VRSWriter imported successfully` が表示されること
+
+- [ ] 🧪 **テスト**: Pythonからのインポートテスト
+  ```bash
+  python3 -c "from pyvrs_writer import VRSWriter; w = VRSWriter('/tmp/test.vrs'); print('OK'); w.close()"
+  rm -f /tmp/test.vrs
+  ```
+  **期待:** `OK` と表示され、エラーがないこと
+
+- [ ] 🛠 **エラー時対処**:
+  - `ImportError: No module named '_pyvrs_writer'`: .soファイルの生成を確認
+  - ビルドエラー: CMakeのエラーログを確認
+  - リンクエラー: VRSライブラリのビルドを確認
+
+#### 手順 1A.14: Pythonテストの実行
+
+- [ ] 🖐 **操作**: pytestでPythonテストを実行
+  ```bash
+  cd pyvrs_writer
+  pytest python_tests/test_pyvrs_writer.py -v
+  cd ..
+  ```
+
+- [ ] 🔎 **確認**: 全テストがPASSすること
+  ```bash
+  cd pyvrs_writer
+  pytest python_tests/test_pyvrs_writer.py -v 2>&1 | grep -E "(PASSED|FAILED|ERROR)"
+  cd ..
+  ```
+  **期待結果:** 全テストが `PASSED` と表示されること
+
+- [ ] 🧪 **テスト**: カバレッジ付きテスト実行
+  ```bash
+  cd pyvrs_writer
+  pytest python_tests/ --cov=pyvrs_writer --cov-report=term-missing
+  cd ..
+  ```
+  **期待:** テストカバレッジが表示されること
+
+- [ ] 🛠 **エラー時対処**:
+  - テスト失敗: エラーメッセージを確認し、C++実装またはバインディングを修正
+  - `ModuleNotFoundError`: `pip install -e .` でインストールを確認
+
+#### 手順 1A.15: ドキュメントの作成
+
+- [ ] 🖐 **操作**: pyvrs_writer/README.mdを作成
+  ```markdown
+  # pyvrs_writer
+
+  Python bindings for VRS (Virtual Reality Stream) file writing.
+
+  ## Overview
+
+  This package provides Python interface to write VRS files using the VRS C++ library.
+  PyVRS (official package) only supports reading VRS files, so this package fills that gap.
+
+  ## Installation
+
+  ### Prerequisites
+
+  - Python 3.9+
+  - CMake 3.10+
+  - C++17 compiler
+  - VRS C++ library dependencies: boost, lz4, zstd, fmt
+
+  ### Build and Install
+
+  ```bash
+  cd pyvrs_writer
+  pip install -e .
+  ```
+
+  ## Usage
+
+  ### Basic Example
+
+  ```python
+  from pyvrs_writer import VRSWriter
+
+  with VRSWriter("output.vrs") as writer:
+      # Add a stream
+      writer.add_stream(1001, "RGB Camera")
+
+      # Write configuration
+      config = '{"width": 640, "height": 480}'
+      writer.write_configuration(1001, config)
+
+      # Write data
+      data = bytes([0x01, 0x02, 0x03])
+      writer.write_data(1001, 0.0, data)
+  ```
+
+  ## API Reference
+
+  ### VRSWriter
+
+  #### `__init__(filepath: str)`
+  Create a new VRS file.
+
+  #### `add_stream(stream_id: int, stream_name: str)`
+  Add a new stream to the VRS file.
+
+  #### `write_configuration(stream_id: int, json_config: str)`
+  Write a configuration record.
+
+  #### `write_data(stream_id: int, timestamp: float, data: bytes)`
+  Write a data record.
+
+  #### `close()`
+  Close the VRS file.
+
+  #### `is_open() -> bool`
+  Check if the file is open.
+
+  ## Testing
+
+  ```bash
+  # C++ tests
+  cd build
+  ctest --output-on-failure
+
+  # Python tests
+  pytest python_tests/ -v
+  ```
+
+  ## License
+
+  Apache 2.0 (same as VRS C++ library)
+  ```
+
+- [ ] 🔎 **確認**: README.mdが作成されていることを確認
+  ```bash
+  cat pyvrs_writer/README.md | head -20
+  test -f pyvrs_writer/README.md && echo "README作成成功"
+  ```
+  **期待結果:** README.mdが存在し、使用例が記載されていること
+
+- [ ] 🧪 **テスト**: Markdownの構文チェック（オプション）
+  ```bash
+  # markdownlintがある場合
+  which markdownlint && markdownlint pyvrs_writer/README.md || echo "markdownlint未インストール（スキップ）"
+  ```
+  **期待:** 大きな構文エラーがないこと
+
+- [ ] 🛠 **エラー時対処**:
+  - なし（ドキュメント作成のみ）
+
+---
+
 ### フェーズ 2: VRS Writerモジュール実装 (TDD) (見積: 4.0h)
 
 このフェーズでは、VRSファイルを書き込むための再利用可能なモジュール `scripts/vrs_writer.py` をTDD方式で実装します。
@@ -1576,11 +2513,48 @@ pip install vrs  # Linux/macOS対応、Windows版は開発中
 ### フェーズ 1: 環境構築と調査
 - [x] 手順1.1: PyVRSインストールとバージョン確認
 - [x] 手順1.2: PyVRS APIドキュメント調査とモジュール構造把握
-- [ ] 手順1.3: 最小限のVRSファイル作成テスト
-- [ ] 手順1.4: VRSファイル読み込みテスト
-- [ ] 手順1.5: ROSbag → VRS データマッピング仕様書の作成
+- [x] ~~手順1.3: 最小限のVRSファイル作成テスト~~ （PyVRSにWriter非対応のため中断）
+- [x] ~~手順1.4: VRSファイル読み込みテスト~~ （手順1.3依存のため中断）
+- [ ] 手順1.5: ROSbag → VRS データマッピング仕様書の作成（後で実施）
 
-### フェーズ 2: VRS Writerモジュール実装 (TDD)
+**重要:** PyVRSは読み取り専用ライブラリのため、カスタムバインディング（pyvrs_writer）を作成する方針に変更。
+
+---
+
+### フェーズ 1A: pyvrs_writerパッケージ作成 (C++ + pybind11) (見積: 8.0h)
+
+**目的:** VRS C++ライブラリのRecordFileWriterをpybind11でバインドし、Pythonから使用可能にする。
+
+**成果物:**
+- `pyvrs_writer/` サブディレクトリ（独立パッケージ）
+- C++ VRSWriterラッパークラス + gtest
+- pybind11 Pythonバインディング
+- Pythonテストスイート
+
+詳細手順は上記（手順1A.1〜1A.15）参照。
+
+**重要な注意:** ユーザー指示により、pyvrs_writerは既存のvrs（pyvrs）パッケージに依存する構成に変更。手順1A.1（VRS submodule）は不要。
+
+### フェーズ 1A チェックリスト
+- [ ] 手順1A.1: ~~VRS C++ライブラリをgit submoduleとして追加~~ （不要: 既存pyvrs利用）
+- [ ] 手順1A.2: システム依存関係の確認とインストール
+- [ ] 手順1A.3: pyvrs_writerディレクトリ構造の作成
+- [ ] 手順1A.4: CMakeLists.txtの作成（pyvers依存）
+- [ ] 手順1A.5: C++ VRSWriterラッパークラスのヘッダー設計
+- [ ] 手順1A.6: gtestのセットアップ
+- [ ] 手順1A.7: C++ VRSWriterラッパークラステストの作成 (RED)
+- [ ] 手順1A.8: C++ VRSWriterラッパークラスの実装 (GREEN)
+- [ ] 手順1A.9: pybind11バインディングの実装
+- [ ] 手順1A.10: Pythonパッケージ構造の作成
+- [ ] 手順1A.11: setup.pyの作成
+- [ ] 手順1A.12: Pythonテストケースの作成
+- [ ] 手順1A.13: pyvrs_writerのビルドとインストール
+- [ ] 手順1A.14: Pythonテストの実行
+- [ ] 手順1A.15: ドキュメントの作成
+
+---
+
+### フェーズ 2: VRS Writerモジュール実装 (TDD) → pyvrs_writerラッパー実装に変更
 - [ ] 手順2.1: VRS Writerモジュールのインターフェース設計
 - [ ] 手順2.2: VRS Writerテストケース作成 (RED)
 - [ ] 手順2.3: VRS Writer実装 (GREEN)
@@ -1748,6 +2722,8 @@ git push -u origin <branch-name>
 | 2025-11-19 | 03:37:04 UTC+0000 | Claude (Sonnet 4.5) | tests/test_vrs_import.py作成とテスト実行 | テスト2件作成、全てPASS。手順1.1完了 |
 | 2025-11-19 | 03:40:25 UTC+0000 | Claude (Sonnet 4.5) | 手順1.2開始: PyVRS API調査 | scripts/investigate_pyvrs_api.py作成、docs/pyvrs_api_investigation.md生成 |
 | 2025-11-19 | 03:43:56 UTC+0000 | Claude (Sonnet 4.5) | **重大な発見: PyVRSは読み取り専用** | PyVRSにはWriterクラスが存在しない。VRS C++ライブラリにはRecordFileWriterがあるが、Pythonバインディングに公開されていない。Option 1-3の対処法を提案。作業計画の大幅な見直しが必要。 |
+| 2025-11-19 | 03:47:47 UTC+0000 | Claude (Sonnet 4.5) | 作業計画変更: フェーズ1A追加 | pyvrs_writerパッケージ作成（C++ + pybind11）の詳細手順を追加。15ステップの最小単位アクションに分割。VRSをgit submoduleとして追加する方針で記載。 |
+| 2025-11-19 | 03:50:00 UTC+0000 | Claude (Sonnet 4.5) | **設計変更: pyvrs依存に変更** | ユーザー指示により、pyvrs_writerは既存のvrs（pyvrs）パッケージに依存する構成に変更。VRS submodule追加（手順1A.1）は不要。代わりに既存のpyversライブラリを利用する形に調整。 |
 | | | | | |
 | | | | | |
 | | | | | |
