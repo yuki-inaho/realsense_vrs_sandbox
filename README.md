@@ -326,7 +326,6 @@ realsense_rosbag_vrs_sandbox/
 
 - **[実装詳細 (IMPLEMENTATION.md)](docs/IMPLEMENTATION.md)**: システムアーキテクチャと実装の詳細説明（mermaid図含む）
 - **[VRS API チートシート (VRS_API_CHEATSHEET.md)](docs/VRS_API_CHEATSHEET.md)**: VRS APIの逆引きリファレンス
-- **[作業計画書 (work_plan_rosbag_to_vrs_nov19_2025.md)](docs/work_plan_rosbag_to_vrs_nov19_2025.md)**: 開発プロセス全体の記録、トラブルシューティング、テスト方法
 
 ### 設計ドキュメント
 
