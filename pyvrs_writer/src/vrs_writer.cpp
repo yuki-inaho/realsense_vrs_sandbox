@@ -14,21 +14,46 @@ class SimpleRecordable : public vrs::Recordable {
 public:
   SimpleRecordable(uint32_t streamId, const std::string& streamName)
     : vrs::Recordable(vrs::RecordableTypeId::UnitTest1, streamName),
-      streamId_(streamId) {
+      streamId_(streamId),
+      configTimestamp_(0.0) {
     setRecordableIsActive(true);
   }
 
-  // 純粋仮想関数の実装（最小限のスタブ）
-  const vrs::Record* createConfigurationRecord() override {
-    return nullptr;  // TODO: 実際のConfiguration recordを返す
+  // Configuration JSONを設定
+  void setConfigurationJson(const std::string& jsonConfig, double timestamp) {
+    configJson_ = jsonConfig;
+    configTimestamp_ = timestamp;
   }
 
+  // データレコードを作成
+  void addDataRecord(double timestamp, const std::vector<uint8_t>& data) {
+    // DataSourceを使用してレコードを作成
+    vrs::DataSource dataSource(vrs::DataSourceChunk(data.data(), data.size()));
+    createRecord(timestamp, vrs::Record::Type::DATA, 1, dataSource);
+  }
+
+  // Configuration recordを作成
+  const vrs::Record* createConfigurationRecord() override {
+    if (!configJson_.empty()) {
+      vrs::DataSource dataSource(
+        vrs::DataSourceChunk(configJson_.data(), configJson_.size())
+      );
+      return createRecord(configTimestamp_, vrs::Record::Type::CONFIGURATION, 1, dataSource);
+    }
+    // 空のConfiguration recordを返す
+    return createRecord(0.0, vrs::Record::Type::CONFIGURATION, 1);
+  }
+
+  // State recordを作成（最小限の実装）
   const vrs::Record* createStateRecord() override {
-    return nullptr;  // TODO: 実際のState recordを返す
+    // 空のState recordを返す（状態管理が不要な場合）
+    return createRecord(0.0, vrs::Record::Type::STATE, 1);
   }
 
 private:
   uint32_t streamId_;
+  std::string configJson_;
+  double configTimestamp_;
 };
 
 class VRSWriter::Impl {
@@ -67,9 +92,16 @@ void VRSWriter::writeConfiguration(uint32_t streamId, const std::string& jsonCon
     throw std::runtime_error("VRS file is not open");
   }
 
-  // Configuration recordの書き込み実装
-  // TODO: 実際のVRS APIに合わせて実装
-  // 現在はスタブ実装（テストを通すため）
+  // 対応するRecordableを検索
+  auto it = pImpl_->recordables.find(streamId);
+  if (it == pImpl_->recordables.end()) {
+    throw std::runtime_error("Stream ID not found");
+  }
+
+  // Configuration JSONを設定し、Recordを作成
+  // 注意: 同期書き込みモードでは明示的にcreateConfigurationRecord()を呼ぶ必要がある
+  it->second->setConfigurationJson(jsonConfig, 0.0);
+  it->second->createConfigurationRecord();
 }
 
 void VRSWriter::writeData(uint32_t streamId, double timestamp,
@@ -78,9 +110,14 @@ void VRSWriter::writeData(uint32_t streamId, double timestamp,
     throw std::runtime_error("VRS file is not open");
   }
 
-  // Data recordの書き込み実装
-  // TODO: 実際のVRS APIに合わせて実装
-  // 現在はスタブ実装（テストを通すため）
+  // 対応するRecordableを検索
+  auto it = pImpl_->recordables.find(streamId);
+  if (it == pImpl_->recordables.end()) {
+    throw std::runtime_error("Stream ID not found");
+  }
+
+  // データレコードを作成（即座にRecordManagerに追加される）
+  it->second->addDataRecord(timestamp, data);
 }
 
 void VRSWriter::close() {
